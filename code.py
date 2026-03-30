@@ -3,90 +3,35 @@ import requests
 import io
 import hashlib
 import base64
-import subprocess
-import sys
-import os
 import json
 import time
 import re
-import tempfile
 import zipfile
 from PIL import Image, ImageEnhance
 from urllib.parse import urljoin, urlparse, unquote
 from bs4 import BeautifulSoup
 
-# ---------------------------
-# AUTO-INSTALLATION SYSTEM
-# ---------------------------
+# Try imports - handle gracefully if not available
+try:
+    from selenium import webdriver
+    from selenium.webdriver.chrome.service import Service
+    from selenium.webdriver.chrome.options import Options as ChromeOptions
+    from selenium.webdriver.common.by import By
+    SELENIUM_AVAILABLE = True
+except ImportError:
+    SELENIUM_AVAILABLE = False
 
-# def install_package(package):
-#     """Silently install packages"""
-#     try:
-#         subprocess.check_call([sys.executable, "-m", "pip", "install", package, "-q"])
-#         return True
-#     except:
-#         return False
+try:
+    from webdriver_manager.chrome import ChromeDriverManager
+    WDM_AVAILABLE = True
+except ImportError:
+    WDM_AVAILABLE = False
 
-# Try to import and auto-install if needed
-def get_selenium():
-    """Get selenium with auto-install"""
-    try:
-        from selenium import webdriver
-        from selenium.webdriver.chrome.service import Service
-        from selenium.webdriver.chrome.options import Options
-        from selenium.webdriver.common.by import By
-        from selenium.webdriver.support.ui import WebDriverWait
-        from selenium.webdriver.support import expected_conditions as EC
-        return True, webdriver, Service, Options, By, WebDriverWait, EC
-    except ImportError:
-        if install_package("selenium"):
-            try:
-                from selenium import webdriver
-                from selenium.webdriver.chrome.service import Service
-                from selenium.webdriver.chrome.options import Options
-                from selenium.webdriver.common.by import By
-                from selenium.webdriver.support.ui import WebDriverWait
-                from selenium.webdriver.support import expected_conditions as EC
-                return True, webdriver, Service, Options, By, WebDriverWait, EC
-            except:
-                return False, None, None, None, None, None, None
-        return False, None, None, None, None, None, None
-
-def get_webdriver_manager():
-    """Get webdriver-manager with auto-install"""
-    try:
-        from webdriver_manager.chrome import ChromeDriverManager
-        from webdriver_manager.core.os_manager import ChromeType
-        return True, ChromeDriverManager, ChromeType
-    except ImportError:
-        if install_package("webdriver-manager"):
-            try:
-                from webdriver_manager.chrome import ChromeDriverManager
-                from webdriver_manager.core.os_manager import ChromeType
-                return True, ChromeDriverManager, ChromeType
-            except:
-                return False, None, None
-        return False, None, None
-
-def get_playwright():
-    """Get playwright with auto-install"""
-    try:
-        from playwright.sync_api import sync_playwright
-        return True, sync_playwright
-    except ImportError:
-        if install_package("playwright"):
-            try:
-                subprocess.check_call([sys.executable, "-m", "playwright", "install", "chromium"])
-                from playwright.sync_api import sync_playwright
-                return True, sync_playwright
-            except:
-                return False, None
-        return False, None
-
-# Initialize availability
-SELENIUM_AVAILABLE, webdriver, Service, ChromeOptions, By, WebDriverWait, EC = get_selenium()
-WDM_AVAILABLE, ChromeDriverManager, ChromeType = get_webdriver_manager()
-PLAYWRIGHT_AVAILABLE, sync_playwright = get_playwright()
+try:
+    from playwright.sync_api import sync_playwright
+    PLAYWRIGHT_AVAILABLE = True
+except ImportError:
+    PLAYWRIGHT_AVAILABLE = False
 
 # ---------------------------
 # PAGE CONFIG
@@ -150,9 +95,17 @@ st.markdown("""
         margin: 4px;
     }
     .method-requests { background: #e3f2fd; color: #1976d2; }
-    .method-selenium { background: #f3e5f5; color: #7b1fa2; }
     .method-playwright { background: #e8f5e9; color: #388e3c; }
+    .method-selenium { background: #f3e5f5; color: #7b1fa2; }
     .method-fallback { background: #fff3e0; color: #f57c00; }
+    .error-box {
+        background: #ffebee;
+        color: #c62828;
+        padding: 10px;
+        border-radius: 8px;
+        margin: 10px 0;
+        font-size: 0.9em;
+    }
 </style>
 """, unsafe_allow_html=True)
 
@@ -181,19 +134,11 @@ def convert_special_urls(url):
     if not url:
         return url
     
-    # GitHub.dev (VS Code editor) -> GitHub.com (public repo)
+    # GitHub.dev -> GitHub.com
     if 'github.dev' in url:
         match = re.search(r'github\.dev/([^/]+)/([^/]+)', url)
         if match:
             return f"https://github.com/{match.group(1)}/{match.group(2)}"
-    
-    # GitHub raw content links
-    if 'raw.githubusercontent.com' in url:
-        return url
-    
-    # Handle gist.github.com
-    if 'gist.github.com' in url:
-        return url
     
     # Remove tracking parameters
     url = re.sub(r'[?&](utm_|ref|source|campaign|fbclid|gclid).*', '', url)
@@ -212,37 +157,26 @@ def is_valid_url(url):
 # MULTI-METHOD FETCH SYSTEM
 # ---------------------------
 
-def get_content_requests(url, headers=None):
+def get_content_requests(url):
     """Method 1: Simple requests with multiple header strategies"""
-    if headers is None:
-        headers_list = [
-            {
-                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-                "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
-                "Accept-Language": "en-US,en;q=0.5",
-                "Accept-Encoding": "gzip, deflate, br",
-                "Connection": "keep-alive",
-                "Upgrade-Insecure-Requests": "1",
-                "Sec-Fetch-Dest": "document",
-                "Sec-Fetch-Mode": "navigate",
-                "Sec-Fetch-Site": "none",
-                "Cache-Control": "max-age=0"
-            },
-            {
-                "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36",
-                "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-            },
-            {
-                "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.0.36 (KHTML, like Gecko) Chrome/118.0.0.0 Safari/537.36",
-                "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-            }
-        ]
-    else:
-        headers_list = [headers]
+    headers_list = [
+        {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
+            "Accept-Language": "en-US,en;q=0.5",
+            "Accept-Encoding": "gzip, deflate, br",
+            "Connection": "keep-alive",
+            "Upgrade-Insecure-Requests": "1",
+        },
+        {
+            "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36",
+            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+        }
+    ]
     
-    for i, hdrs in enumerate(headers_list):
+    for headers in headers_list:
         try:
-            response = requests.get(url, headers=hdrs, timeout=20, allow_redirects=True)
+            response = requests.get(url, headers=headers, timeout=20, allow_redirects=True)
             response.raise_for_status()
             if len(response.text) > 500:
                 return response.text, "requests"
@@ -252,7 +186,7 @@ def get_content_requests(url, headers=None):
     return None, None
 
 def get_content_playwright(url, wait_time=3):
-    """Method 2: Playwright (auto-downloads Chromium)"""
+    """Method 2: Playwright"""
     if not PLAYWRIGHT_AVAILABLE:
         return None, None
     
@@ -266,13 +200,9 @@ def get_content_playwright(url, wait_time=3):
             page.wait_for_timeout(wait_time * 1000)
             
             # Scroll to trigger lazy loading
-            page.evaluate("""() => {
-                window.scrollTo(0, document.body.scrollHeight / 3);
-            }""")
+            page.evaluate("() => { window.scrollTo(0, document.body.scrollHeight / 3); }")
             page.wait_for_timeout(1000)
-            page.evaluate("""() => {
-                window.scrollTo(0, document.body.scrollHeight * 2 / 3);
-            }""")
+            page.evaluate("() => { window.scrollTo(0, document.body.scrollHeight * 2 / 3); }")
             page.wait_for_timeout(1000)
             
             content = page.content()
@@ -283,7 +213,7 @@ def get_content_playwright(url, wait_time=3):
         return None, None
 
 def get_content_selenium(url, wait_time=3):
-    """Method 3: Selenium with auto-setup"""
+    """Method 3: Selenium"""
     if not SELENIUM_AVAILABLE:
         return None, None
     
@@ -296,12 +226,9 @@ def get_content_selenium(url, wait_time=3):
         options.add_argument("--disable-gpu")
         options.add_argument("--window-size=1920,1080")
         options.add_argument("--disable-blink-features=AutomationControlled")
-        options.add_argument("--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.0.36")
+        options.add_argument("--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
         options.add_argument("--disable-extensions")
-        options.add_argument("--disable-plugins")
-        options.add_argument("--disable-images")  # Don't load images for speed
         
-        # Try to create driver with webdriver-manager
         try:
             if WDM_AVAILABLE:
                 service = Service(ChromeDriverManager().install())
@@ -309,11 +236,7 @@ def get_content_selenium(url, wait_time=3):
             else:
                 driver = webdriver.Chrome(options=options)
         except Exception as e:
-            # Fallback to direct Chrome
-            try:
-                driver = webdriver.Chrome(options=options)
-            except:
-                return None, None
+            return None, None
         
         driver.get(url)
         time.sleep(wait_time)
@@ -322,8 +245,6 @@ def get_content_selenium(url, wait_time=3):
         driver.execute_script("window.scrollTo(0, document.body.scrollHeight / 3);")
         time.sleep(1)
         driver.execute_script("window.scrollTo(0, document.body.scrollHeight * 2 / 3);")
-        time.sleep(1)
-        driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
         time.sleep(1)
         
         content = driver.page_source
@@ -340,15 +261,9 @@ def get_content_selenium(url, wait_time=3):
                 pass
 
 def get_page_content(url, force_method=None, wait_time=3):
-    """
-    Smart content fetcher with automatic fallback chain:
-    1. Requests (fastest, works on static sites)
-    2. Playwright (auto-downloads browser, good for JS)
-    3. Selenium (if available)
-    """
+    """Smart content fetcher with automatic fallback"""
     st.session_state.errors = []
     
-    # Method priority based on force_method or auto
     methods = []
     if force_method == "requests":
         methods = [get_content_requests]
@@ -357,16 +272,14 @@ def get_page_content(url, force_method=None, wait_time=3):
     elif force_method == "selenium":
         methods = [get_content_selenium, get_content_playwright, get_content_requests]
     else:
-        # Auto: Try fast methods first, then JS-rendered
-        methods = [
-            get_content_requests,
-            get_content_playwright,
-            get_content_selenium
-        ]
+        methods = [get_content_requests, get_content_playwright, get_content_selenium]
     
     for method in methods:
         try:
-            content, method_name = method(url, wait_time) if method != get_content_requests else method(url)
+            if method == get_content_requests:
+                content, method_name = method(url)
+            else:
+                content, method_name = method(url, wait_time)
             if content and len(content) > 1000:
                 return content, method_name
         except Exception as e:
@@ -375,7 +288,7 @@ def get_page_content(url, force_method=None, wait_time=3):
     return None, None
 
 # ---------------------------
-# ADVANCED IMAGE EXTRACTION
+# IMAGE EXTRACTION
 # ---------------------------
 
 def extract_images(content, base_url):
@@ -386,10 +299,9 @@ def extract_images(content, base_url):
     # Strategy 1: All img tag attributes
     img_attrs = ['src', 'data-src', 'data-original', 'data-lazy-src', 
                  'data-srcset', 'srcset', 'data-url', 'data-image', 
-                 'data-bg', 'data-poster', 'data-full', 'data-high-res',
-                 'data-thumb', 'data-large', 'data-medium', 'data-zoom']
+                 'data-bg', 'data-poster', 'data-full', 'data-high-res']
     
-    for tag in soup.find_all(['img', 'picture', 'source', 'figure', 'div', 'a', 'span']):
+    for tag in soup.find_all(['img', 'picture', 'source', 'figure', 'div', 'a']):
         for attr in img_attrs:
             val = tag.get(attr)
             if val:
@@ -417,84 +329,29 @@ def extract_images(content, base_url):
     for script in soup.find_all('script', type='application/ld+json'):
         try:
             if script.string:
-                urls = re.findall(r'https?://[^\s"\'<>]+?\.(?:jpg|jpeg|png|gif|webp|svg)', script.string, re.IGNORECASE)
+                urls = re.findall(r'https?://[^\s"\'<>]+?\.(?:jpg|jpeg|png|gif|webp)', script.string, re.IGNORECASE)
                 for url in urls:
                     if is_valid_image_url(url):
                         image_urls.add(clean_url(url))
         except:
             pass
     
-    # Strategy 3: Meta tags (Open Graph, Twitter)
+    # Strategy 3: Meta tags
     for meta in soup.find_all('meta'):
         content_val = meta.get('content', '')
         property_val = meta.get('property', '')
         
-        if any(x in property_val for x in ['og:image', 'twitter:image', 'image']):
+        if any(x in property_val for x in ['og:image', 'twitter:image']):
             if is_valid_image_url(content_val):
                 image_urls.add(clean_url(content_val))
-        
-        if any(ext in content_val.lower() for ext in ['.jpg', '.jpeg', '.png', '.gif', '.webp']):
-            full_url = urljoin(base_url, content_val)
-            if is_valid_image_url(full_url):
-                image_urls.add(clean_url(full_url))
     
-    # Strategy 4: Link tags
-    for link in soup.find_all('link'):
-        href = link.get('href', '')
-        rel = link.get('rel', [])
-        if 'icon' in rel or 'image' in rel or any(ext in href.lower() for ext in ['.jpg', '.png', '.ico']):
-            full_url = urljoin(base_url, href)
-            if is_valid_image_url(full_url):
-                image_urls.add(clean_url(full_url))
-    
-    # Strategy 5: A tags linking to images
+    # Strategy 4: A tags linking to images
     for a in soup.find_all('a'):
         href = a.get('href', '')
-        if any(ext in href.lower() for ext in ['.jpg', '.jpeg', '.png', '.gif', '.webp', '.svg', '.bmp']):
+        if any(ext in href.lower() for ext in ['.jpg', '.jpeg', '.png', '.gif', '.webp']):
             full_url = urljoin(base_url, href)
             if is_valid_image_url(full_url):
                 image_urls.add(clean_url(full_url))
-        
-        for attr in ['data-url', 'data-image', 'data-full', 'data-href', 'data-src']:
-            val = a.get(attr)
-            if val and any(ext in val.lower() for ext in ['.jpg', '.jpeg', '.png', '.gif', '.webp']):
-                full_url = urljoin(base_url, val)
-                if is_valid_image_url(full_url):
-                    image_urls.add(clean_url(full_url))
-    
-    # Strategy 6: Inline scripts with image arrays
-    for script in soup.find_all('script'):
-        if script.string:
-            patterns = [
-                r'["\'](https?://[^"\']+\.(?:jpg|jpeg|png|gif|webp))["\']',
-                r'src:\s*["\']([^"\']+)["\']',
-                r'url:\s*["\']([^"\']+)["\']',
-                r'"image":\s*["\']([^"\']+)["\']',
-                r'"url":\s*["\']([^"\']+)["\']'
-            ]
-            for pattern in patterns:
-                matches = re.findall(pattern, script.string, re.IGNORECASE)
-                for match in matches:
-                    full_url = urljoin(base_url, match)
-                    if is_valid_image_url(full_url):
-                        image_urls.add(clean_url(full_url))
-    
-    # Strategy 7: JSON in script tags (common in galleries)
-    for script in soup.find_all('script'):
-        if script.string:
-            try:
-                # Look for image arrays in JSON
-                json_matches = re.findall(r'\{[^}]*"[^"]*src[^"]*":"[^"]*\.(?:jpg|jpeg|png|gif|webp)[^}]*\}', script.string)
-                for match in json_matches:
-                    try:
-                        data = json.loads(match)
-                        for key in ['src', 'url', 'image', 'thumbnail', 'full']:
-                            if key in data and is_valid_image_url(data[key]):
-                                image_urls.add(clean_url(data[key]))
-                    except:
-                        pass
-            except:
-                pass
     
     return list(image_urls)
 
@@ -510,48 +367,42 @@ def is_valid_image_url(url):
     
     skip_patterns = [
         'javascript:', 'data:', 'blob:', 'mailto:', 'tel:',
-        'facebook.com/tr', 'google-analytics', 'googletagmanager',
-        'doubleclick', 'analytics', 'tracking', 'beacon',
-        'pixel', 'gif?c', 'count?', 'log?', 'stats?',
-        'emoji', 'icon', 'sprite', 'loader', 'spinner',
-        'blank.gif', 'transparent.gif', 'spacer.gif'
+        'google-analytics', 'googletagmanager', 'doubleclick',
+        'analytics', 'tracking', 'beacon', 'pixel'
     ]
     
     if any(pattern in url.lower() for pattern in skip_patterns):
         return False
     
-    image_exts = ['.jpg', '.jpeg', '.png', '.gif', '.webp', '.svg', '.bmp', '.ico', '.tiff', '.avif']
+    image_exts = ['.jpg', '.jpeg', '.png', '.gif', '.webp', '.svg', '.bmp', '.ico']
     has_image_ext = any(ext in url.lower().split('?')[0] for ext in image_exts)
     
-    image_indicators = ['/image', '/img', '/photo', '/pic', '/asset', '/download', '/file', '/media', '/upload']
+    image_indicators = ['/image', '/img', '/photo', '/pic', '/asset', '/media']
     has_indicator = any(ind in url.lower() for ind in image_indicators)
     
     return has_image_ext or has_indicator
 
 def clean_url(url):
     """Clean URL for processing"""
-    url = url.replace('&amp;', '&').replace('&lt;', '<').replace('&gt;', '>')
+    url = url.replace('&amp;', '&')
     url = url.split('#')[0]
     
     if '?' in url:
         base, query = url.split('?', 1)
-        essential_params = ['w', 'h', 'width', 'height', 'size', 'q', 'quality', 'format', 'fm', 'fit', 'crop']
+        essential_params = ['w', 'h', 'width', 'height', 'q', 'quality']
         params = []
         for p in query.split('&'):
             if '=' in p:
                 key = p.split('=')[0]
-                if key in essential_params or not any(t in key.lower() for t in ['utm', 'ref', 'track', 'click', 'source', 'campaign']):
+                if key in essential_params or not any(t in key.lower() for t in ['utm', 'ref', 'track']):
                     params.append(p)
         
-        if params:
-            url = base + '?' + '&'.join(params)
-        else:
-            url = base
+        url = base + '?' + '&'.join(params) if params else base
     
     return url.strip()
 
 # ---------------------------
-# IMAGE FETCHING & PROCESSING
+# IMAGE PROCESSING
 # ---------------------------
 
 def fetch_image(url, max_size_mb=10):
@@ -566,10 +417,6 @@ def fetch_image(url, max_size_mb=10):
         response = requests.get(url, headers=headers, timeout=20, stream=True)
         response.raise_for_status()
         
-        content_type = response.headers.get('content-type', '').lower()
-        if not ('image' in content_type or any(ext in url.lower() for ext in ['.jpg', '.jpeg', '.png', '.gif', '.webp', '.svg', '.bmp'])):
-            return None, None, 0
-        
         content = b''
         for chunk in response.iter_content(chunk_size=8192):
             content += chunk
@@ -583,25 +430,19 @@ def fetch_image(url, max_size_mb=10):
         
         try:
             image = Image.open(io.BytesIO(content))
-            
-            if image.mode in ('RGBA', 'P', 'LA', 'L', 'CMYK'):
+            if image.mode != 'RGB':
                 image = image.convert('RGB')
-            elif image.mode != 'RGB':
-                image = image.convert('RGB')
-            
             return image, content, size_kb
-            
-        except Exception as e:
+        except:
             return None, content, size_kb
             
-    except Exception as e:
+    except:
         return None, None, 0
 
 def enhance_image(image, scale_factor=3):
     """Enhance image with upscaling"""
     try:
         original_width, original_height = image.size
-        
         new_width = int(original_width * scale_factor)
         new_height = int(original_height * scale_factor)
         
@@ -614,17 +455,10 @@ def enhance_image(image, scale_factor=3):
         enhanced = enhancer.enhance(1.05)
         
         output = io.BytesIO()
-        
-        if scale_factor >= 3:
-            enhanced.save(output, format='PNG', optimize=True)
-        else:
-            enhanced.save(output, format='JPEG', quality=95, optimize=True)
-        
+        enhanced.save(output, format='PNG', optimize=True)
         output.seek(0)
         return output.getvalue()
-        
-    except Exception as e:
-        st.error(f"Enhancement failed: {e}")
+    except:
         return None
 
 def get_download_filename(url, prefix="", suffix=""):
@@ -632,7 +466,6 @@ def get_download_filename(url, prefix="", suffix=""):
     try:
         parsed = urlparse(url)
         path = unquote(parsed.path)
-        
         filename = path.split('/')[-1] if '/' in path else 'image'
         filename = re.sub(r'[^a-zA-Z0-9._-]', '_', filename)
         
@@ -640,18 +473,16 @@ def get_download_filename(url, prefix="", suffix=""):
             filename += '.png'
         
         name, ext = filename.rsplit('.', 1) if '.' in filename else (filename, 'png')
-        final = f"{prefix}{name[:50]}{suffix}.{ext}"
-        
-        return final
+        return f"{prefix}{name[:50]}{suffix}.{ext}"
     except:
         return f"{prefix}image{suffix}.png"
 
 # ---------------------------
-# DISPLAY COMPONENTS
+# DISPLAY
 # ---------------------------
 
 def display_image_controls(idx, data):
-    """Display image with individual controls"""
+    """Display image with controls"""
     image = data['image']
     raw_bytes = data['bytes']
     size_kb = data['size']
@@ -664,12 +495,10 @@ def display_image_controls(idx, data):
     
     with col_img:
         st.image(image, use_container_width=True, caption=f"{width} × {height} px")
-        
         st.markdown(f"""
         <div class="stats-row">
             <span class="stat-badge">📦 {size_mb:.2f} MB</span>
             <span class="stat-badge">📐 {width}×{height}</span>
-            <span class="stat-badge">#{idx+1}</span>
         </div>
         """, unsafe_allow_html=True)
     
@@ -684,30 +513,27 @@ def display_image_controls(idx, data):
             data=raw_bytes,
             file_name=orig_name,
             mime=mime,
-            key=f"dl_orig_{idx}_{hash(url) % 10000}",
-            help="Download original image"
+            key=f"dl_orig_{idx}_{hash(url) % 10000}"
         )
         
         enhance_key = f"enh_{idx}_{hash(url) % 10000}"
         
         if enhance_key not in st.session_state.enhanced_images:
-            if st.button("✨ Enhance 3×", key=f"btn_{enhance_key}", 
-                        help="AI-powered 3x upscaling"):
+            if st.button("✨ Enhance 3×", key=f"btn_{enhance_key}"):
                 with st.spinner("Enhancing..."):
                     enhanced = enhance_image(image, scale_factor=3)
                     if enhanced:
                         st.session_state.enhanced_images[enhance_key] = {
                             'bytes': enhanced,
-                            'filename': get_download_filename(url, prefix=f"{idx+1}_", suffix="_3x_enhanced")
+                            'filename': get_download_filename(url, prefix=f"{idx+1}_", suffix="_3x")
                         }
                         st.rerun()
         
         if enhance_key in st.session_state.enhanced_images:
             enh_data = st.session_state.enhanced_images[enhance_key]
-            
             try:
                 preview = Image.open(io.BytesIO(enh_data['bytes']))
-                st.image(preview, caption="Enhanced Preview", use_container_width=True)
+                st.image(preview, caption="Enhanced", use_container_width=True)
             except:
                 pass
             
@@ -716,53 +542,22 @@ def display_image_controls(idx, data):
                 data=enh_data['bytes'],
                 file_name=enh_data['filename'],
                 mime="image/png",
-                key=f"dl_enh_{enhance_key}",
-                help="Download 3x upscaled image"
+                key=f"dl_enh_{enhance_key}"
             )
             
             if st.button("🗑️ Clear", key=f"clr_{enhance_key}"):
                 del st.session_state.enhanced_images[enhance_key]
                 st.rerun()
-        
-        st.markdown(f"<small style='color: #888;' title='{url}'>{url[:35]}...</small>", 
-                   unsafe_allow_html=True)
 
 # ---------------------------
 # MAIN UI
 # ---------------------------
 st.title("🌐 Universal Image Scraper Pro")
-st.markdown("Extract images from **any website** • Auto-detects JavaScript • No setup required")
+st.markdown("Extract images from any website • Auto-detects JavaScript")
 
 # Sidebar
 with st.sidebar:
     st.header("⚙️ Configuration")
-    
-    # Method selection
-    method_options = ["Auto (Recommended)", "Requests Only (Fast)", "Playwright (JS-heavy sites)", "Selenium (Legacy)"]
-    method_choice = st.selectbox(
-        "Scraping Method",
-        method_options,
-        index=0,
-        help="Auto tries multiple methods. Select specific method if you know the site type."
-    )
-    
-    force_method = None
-    if method_choice == "Requests Only (Fast)":
-        force_method = "requests"
-    elif method_choice == "Playwright (JS-heavy sites)":
-        force_method = "playwright"
-    elif method_choice == "Selenium (Legacy)":
-        force_method = "selenium"
-    
-    wait_time = st.slider("Page Load Wait (sec)", 1, 10, 3,
-                         help="Seconds to wait for JavaScript rendering")
-    
-    max_images = st.slider("Max Images", 10, 200, 50)
-    
-    min_size = st.slider("Min Size (KB)", 1, 100, 5,
-                        help="Filter out small icons and thumbnails")
-    
-    st.divider()
     
     # Show available methods
     st.markdown("**🔧 Available Methods:**")
@@ -772,30 +567,35 @@ with st.sidebar:
         st.markdown(f"{'✅' if PLAYWRIGHT_AVAILABLE else '❌'} Playwright")
     with col2:
         st.markdown(f"{'✅' if SELENIUM_AVAILABLE else '❌'} Selenium")
-        st.markdown(f"{'✅' if WDM_AVAILABLE else '❌'} WebDriver Mgr")
+        st.markdown(f"{'✅' if WDM_AVAILABLE else '❌'} WebDriver")
     
     st.divider()
-    st.markdown("""
-    **💡 Tips:**
-    - **Auto mode**: Tries all methods automatically
-    - **Requests**: Fastest, works on static sites (Wikipedia, blogs)
-    - **Playwright**: Best for React/SPA sites, auto-downloads browser
-    - **Selenium**: Fallback for complex sites
     
-    **Special URLs:**
-    - `github.dev/*` → auto-converts to `github.com/*`
-    - Removes tracking parameters automatically
-    """)
+    method_choice = st.selectbox(
+        "Scraping Method",
+        ["Auto (Recommended)", "Requests Only", "Playwright", "Selenium"],
+        index=0
+    )
+    
+    force_method = None
+    if method_choice == "Requests Only":
+        force_method = "requests"
+    elif method_choice == "Playwright":
+        force_method = "playwright"
+    elif method_choice == "Selenium":
+        force_method = "selenium"
+    
+    wait_time = st.slider("Page Load Wait", 1, 10, 3)
+    max_images = st.slider("Max Images", 10, 200, 50)
+    min_size = st.slider("Min Size (KB)", 1, 100, 5)
 
 # Main input
 url_input = st.text_input(
     "🔗 Website URL",
-    placeholder="https://www.example.com/gallery",
-    value=st.session_state.current_url,
-    help="Supports any website. GitHub.dev URLs are auto-converted."
+    placeholder="https://www.example.com",
+    value=st.session_state.current_url
 )
 
-# Action buttons
 col1, col2, col3 = st.columns([1, 1, 3])
 
 with col1:
@@ -803,72 +603,54 @@ with col1:
         if not url_input:
             st.warning("Please enter a URL")
         else:
-            # Process URL
             url = url_input if url_input.startswith('http') else f'https://{url_input}'
             url = convert_special_urls(url)
             
             if not is_valid_url(url):
-                st.error("❌ Invalid URL format")
+                st.error("❌ Invalid URL")
                 st.stop()
             
             st.session_state.current_url = url
             st.session_state.images_data = []
             st.session_state.enhanced_images = {}
             st.session_state.scraping_done = False
-            st.session_state.method_used = None
             
-            # Progress
             progress = st.progress(0)
             status = st.empty()
             
-            # Step 1: Fetch
-            status.text("📡 Fetching page content...")
+            status.text("📡 Fetching page...")
             progress.progress(10)
             
-            content, method_used = get_page_content(url, force_method=force_method, wait_time=wait_time)
+            content, method_used = get_page_content(url, force_method, wait_time)
             
             if not content:
-                st.error("❌ Failed to load page. The site may block scrapers or require authentication.")
+                st.error("❌ Failed to load page")
                 if st.session_state.errors:
-                    with st.expander("Error Details"):
+                    with st.expander("Errors"):
                         for err in st.session_state.errors:
-                            st.text(err)
+                            st.markdown(f'<div class="error-box">{err}</div>', unsafe_allow_html=True)
                 progress.empty()
                 status.empty()
                 st.stop()
             
             st.session_state.method_used = method_used
             
-            # Show method badge
-            method_colors = {
-                'requests': 'method-requests',
-                'playwright': 'method-playwright', 
-                'selenium': 'method-selenium'
-            }
-            badge_class = method_colors.get(method_used, 'method-fallback')
-            st.markdown(f"""
-            <div style="margin: 10px 0;">
-                <span class="method-badge {badge_class}">✅ Loaded via: {method_used.upper()}</span>
-            </div>
-            """, unsafe_allow_html=True)
+            badge_class = f"method-{method_used}" if method_used else "method-fallback"
+            st.markdown(f'<span class="method-badge {badge_class}">✅ {method_used.upper()}</span>', unsafe_allow_html=True)
             
             progress.progress(30)
+            status.text("🔍 Finding images...")
             
-            # Step 2: Extract URLs
-            status.text("🔍 Scanning for images...")
             image_urls = extract_images(content, url)
             image_urls = list(dict.fromkeys(image_urls))[:max_images * 3]
             
             progress.progress(40)
-            status.text(f"📸 Found {len(image_urls)} potential images, validating...")
+            status.text(f"📸 Validating {len(image_urls)} images...")
             
-            # Step 3: Fetch images
             valid_images = []
-            
             for i, img_url in enumerate(image_urls):
                 prog = 40 + int((i / len(image_urls)) * 50)
                 progress.progress(min(prog, 90))
-                status.text(f"⏳ Validating {i+1}/{len(image_urls)}...")
                 
                 img, raw, size = fetch_image(img_url)
                 if img and size >= min_size:
@@ -883,45 +665,39 @@ with col1:
                     break
             
             progress.progress(100)
-            time.sleep(0.5)
+            time.sleep(0.3)
             progress.empty()
             status.empty()
             
-            # Sort by size (largest first)
             valid_images.sort(key=lambda x: x['size'], reverse=True)
-            
             st.session_state.images_data = valid_images
             st.session_state.scraping_done = True
             
             if valid_images:
-                st.success(f"✅ Successfully loaded {len(valid_images)} images!")
+                st.success(f"✅ {len(valid_images)} images found!")
             else:
-                st.warning("⚠️ No valid images found. Try adjusting Min Size or using a different method.")
+                st.warning("⚠️ No images found")
 
 with col2:
-    if st.button("🗑️ Clear All", use_container_width=True):
+    if st.button("🗑️ Clear", use_container_width=True):
         st.session_state.images_data = []
         st.session_state.enhanced_images = {}
         st.session_state.scraping_done = False
-        st.session_state.method_used = None
         st.rerun()
 
 # Display results
 if st.session_state.scraping_done:
     st.divider()
     
-    # Summary bar
     total = len(st.session_state.images_data)
-    enhanced_count = len(st.session_state.enhanced_images)
     total_size = sum(d['size'] for d in st.session_state.images_data) / 1024
     
     cols = st.columns([2, 1, 1, 2])
-    cols[0].markdown(f"### 🖼️ {total} Images Found")
-    cols[1].metric("Enhanced", enhanced_count)
-    cols[2].metric("Total Size", f"{total_size:.1f} MB")
+    cols[0].markdown(f"### 🖼️ {total} Images")
+    cols[1].metric("Enhanced", len(st.session_state.enhanced_images))
+    cols[2].metric("Size", f"{total_size:.1f} MB")
     
-    # Bulk download
-    if total > 0 and cols[3].button("📦 Download All Original"):
+    if total > 0 and cols[3].button("📦 Download All"):
         zip_buf = io.BytesIO()
         with zipfile.ZipFile(zip_buf, 'w', zipfile.ZIP_DEFLATED) as zf:
             for i, d in enumerate(st.session_state.images_data):
@@ -931,21 +707,17 @@ if st.session_state.scraping_done:
         st.download_button(
             "⬇️ Download ZIP",
             data=zip_buf.getvalue(),
-            file_name="all_images.zip",
-            mime="application/zip",
-            key="bulk_zip"
+            file_name="images.zip",
+            mime="application/zip"
         )
     
     st.divider()
     
-    # Individual images
     for idx, data in enumerate(st.session_state.images_data):
         with st.container():
             st.markdown('<div class="image-container">', unsafe_allow_html=True)
             display_image_controls(idx, data)
             st.markdown('</div>', unsafe_allow_html=True)
-            st.markdown("<br>", unsafe_allow_html=True)
 
-# Footer
 st.divider()
-st.caption("🔒 Respects robots.txt | 🚀 Auto-detects JavaScript | 🎨 AI Enhancement | Works on Streamlit Cloud")
+st.caption("🔒 Respects robots.txt | 🚀 Auto-detects JS | Works on Streamlit Cloud")
