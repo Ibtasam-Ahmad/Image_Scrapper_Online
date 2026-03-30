@@ -19,13 +19,13 @@ from bs4 import BeautifulSoup
 # AUTO-INSTALLATION SYSTEM
 # ---------------------------
 
-def install_package(package):
-    """Silently install packages"""
-    try:
-        subprocess.check_call([sys.executable, "-m", "pip", "install", package, "-q"])
-        return True
-    except:
-        return False
+# def install_package(package):
+#     """Silently install packages"""
+#     try:
+#         subprocess.check_call([sys.executable, "-m", "pip", "install", package, "-q"])
+#         return True
+#     except:
+#         return False
 
 # Try to import and auto-install if needed
 def get_selenium():
